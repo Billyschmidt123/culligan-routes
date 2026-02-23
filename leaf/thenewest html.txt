@@ -1,0 +1,1233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Culligan Bottled Water- Grande Prairie</title>
+
+<link rel="stylesheet" href="leaflet/leaflet.css" />
+<script src="leaflet/leaflet.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/signature_pad@4.0.0/dist/signature_pad.umd.min.js"></script>
+
+<style>
+  :root { --culligan-blue: #002b7f; --accent-blue: #0078ff; }
+  body { margin: 0; height: 100vh; font-family: 'Segoe UI', Arial, sans-serif; display: flex; flex-direction: column; background: #1a1a1a; color: white; overflow: hidden; }
+  #topbar { display: flex; align-items: center; justify-content: space-between; padding: 10px 20px; background: #222; border-bottom: 2px solid var(--accent-blue); z-index: 1001; }
+  #activeDeliveryDisplay { flex: 1; text-align: center; margin: 0 20px; color: #fff; font-size: 14px; display: none; }
+  #activeDeliveryDisplay b { color: var(--accent-blue); }
+  #topPhoneLink { color: #28a745; text-decoration: none; font-weight: bold; }
+  #loadingContainer { width: 100%; height: 5px; background: #111; display: none; }
+  #loadingBar { width: 0%; height: 100%; background: var(--accent-blue); transition: width 0.3s; }
+  #mainContainer { display: flex; flex: 1; overflow: hidden; }
+  #sidebar { width: 380px; background: #222; border-right: 1px solid #444; display: flex; flex-direction: column; }
+  #sidebarFixed { padding: 15px; border-bottom: 1px solid #444; flex-shrink: 0; }
+  #sidebarScroll { flex: 1; overflow-y: auto; padding: 10px 15px; }
+  #map { flex: 1; height: 100%; background: #111; z-index: 1; }
+  .btn { padding: 10px 15px; background: var(--accent-blue); color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; margin-bottom: 5px; }
+  .btn-green { background: #28a745; }
+  .btn-red { background: #dc3545; }
+  .btn-orange { background: #f39c12; }
+  .card-input { width: 100%; padding: 8px; margin: 4px 0; border-radius: 4px; border: 1px solid #555; background: #111; color: white; box-sizing: border-box; font-size: 13px; }
+  #activeStopCard { display:none; background:#2a2a2a; padding:12px; border-radius:8px; border-left:5px solid #28a745; display: flex; flex-direction: column; }
+  #stopCardInner { overflow-y: auto; margin-top: 8px; border-top: 1px solid #444; padding-top: 8px; }
+  #managerOverlay, #syncModal, #settingsOverlay { display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.9); z-index:4000; align-items:center; justify-content:center; }
+  .mgr-content { width: 95%; max-width: 850px; background: #222; border-radius: 10px; padding: 20px; border: 1px solid #444; overflow-y: auto; max-height: 90vh; }
+  .map-label { background: var(--accent-blue); border: 2px solid white; border-radius: 50%; color: white; font-weight: bold; text-align: center; line-height: 20px; width: 20px; height: 20px; font-size: 12px; }
+  .map-label-active { background: #dc3545; border: 2px solid white; border-radius: 50%; color: white; font-weight: bold; text-align: center; line-height: 24px; width: 24px; height: 24px; font-size: 14px; z-index: 1000 !important; }
+  .report-table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 13px; }
+  .report-table th, .report-table td { border: 1px solid #444; padding: 8px; text-align: left; }
+  .report-table th { background: #333; color: var(--accent-blue); }
+
+  /* PDF button + container styles (Section 2 will expand on this) */
+  .pdf-btn-small {
+      background: #f39c12;
+      color: white;
+      padding: 3px 6px;
+      font-size: 10px;
+      border-radius: 4px;
+      cursor: pointer;
+      display: inline-block;
+      margin: 2px 0;
+  }
+  .pdf-container {
+      margin-top: 4px;
+  }
+</style>
+</head>
+<body>
+
+<div id="topbar">
+  <div style="display: flex; gap: 12px; align-items: center;">
+    <h2 style="margin:0; font-size: 18px; color: var(--accent-blue);">CULLIGAN</h2>
+    <button class="btn btn-orange" style="padding: 5px 10px; font-size: 12px;" onclick="openSyncModal()">Route</button>
+  </div>
+  <div id="activeDeliveryDisplay">
+    <b>Stop:</b> <span id="topName">---</span> | <b>Addr:</b> <span id="topAddr">---</span> | <b>Ph:</b> <a id="topPhoneLink" href="tel:">---</a>
+  </div>
+  <div style="display: flex; gap: 8px;">
+    <button class="btn" style="background:#555; padding: 5px 10px; font-size: 12px;" onclick="toggleManager()">Manager</button>
+    <button class="btn" style="background:#444; padding: 5px 10px; font-size: 12px;" onclick="toggleSettings()">⚙️</button>
+  </div>
+</div>
+
+<div id="loadingContainer"><div id="loadingBar"></div></div>
+
+<div id="mainContainer">
+  <div id="sidebar">
+    <div id="sidebarFixed">
+        <div id="setupSection">
+            <input type="text" id="setupDriver" class="card-input" placeholder="Driver Name">
+            <button class="btn btn-green" style="width:100%;" onclick="startRoute()">Start Route</button>
+        </div>
+        <div id="activeStopCard">
+            <div style="display:flex; gap:10px; margin-bottom:8px;">
+                <button class="btn" style="flex:1; background:#444; padding: 5px;" onclick="moveBack()">← Back</button>
+                <button class="btn" style="flex:1; background:#444; padding: 5px;" onclick="moveForward()">Forward →</button>
+            </div>
+            <h4 id="cName" style="margin:0; color:#fff; font-size: 16px;"></h4>
+            <p id="cAddr" style="color:var(--accent-blue); margin: 3px 0; font-size: 12px;"></p>
+
+            <!-- PDF link container: TOP of stop card -->
+            <div class="pdf-container" id="pdfStopTop"></div>
+
+            <button class="btn btn-orange" style="width:100%; margin-bottom:5px; padding: 8px;" onclick="imLost()">📍 I'm Lost</button>
+            <div id="stopCardInner">
+                <div style="display:grid; grid-template-columns: 1fr 1fr; gap:6px;">
+                    <div><label style="font-size:9px; color:#aaa;">18L</label><input type="number" id="field18L" class="card-input"></div>
+                    <div><label style="font-size:9px; color:#aaa;">Small</label><input type="number" id="fieldSmallBottles" class="card-input"></div>
+                    <div><label style="font-size:9px; color:#aaa;">Cases</label><input type="number" id="fieldCases" class="card-input"></div>
+                    <div><label style="font-size:9px; color:#aaa;">Salt</label><input type="number" id="fieldSalt" class="card-input"></div>
+                </div>
+                <input type="text" id="fieldMisc" class="card-input" placeholder="Notes">
+                <select id="deliveryStatus" class="card-input">
+                    <option value="delivered">Delivered Successfully</option>
+                    <option value="not_delivered">Skipped</option>
+                </select>
+                <input type="text" id="failReason" class="card-input" placeholder="Reason if skipped">
+                <input type="text" id="fieldReceivedBy" class="card-input" placeholder="Received By">
+                <div style="background:white; border-radius:4px; margin-top:5px;"><canvas id="signature-pad" style="width:100%; height:60px; touch-action: none;"></canvas></div>
+                <button class="btn" style="background:#444; width:100%; font-size:9px; padding:2px; margin-top:2px;" onclick="signaturePad.clear()">Clear Signature</button>
+                <label style="display:flex; align-items:center; gap:5px; font-size:11px; color:#aaa; margin:10px 0;">
+                    <input type="checkbox" id="genSlip"> Generate & Email Delivery Slip
+                </label>
+
+                <!-- PDF link container: BOTTOM of stop card (inside inner area) -->
+                <div class="pdf-container" id="pdfStopBottom"></div>
+            </div>
+            <button class="btn btn-green" id="nextBtn" style="width:100%; margin-top:8px; padding: 12px;" onclick="processNext()">Confirm & Next Stop</button>
+        </div>
+    </div>
+    <div id="sidebarScroll">
+        <div id="stopList">No route loaded.</div>
+    </div>
+  </div>
+  <div id="map"></div>
+</div>
+
+<div id="managerOverlay">
+  <div class="mgr-content">
+    <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #444; margin-bottom:20px;">
+        <h2 style="margin:0; color:var(--accent-blue);">Manager Operations</h2>
+        <button class="btn btn-red" onclick="toggleManager()">Exit</button>
+    </div>
+    <div style="background:#2a2a2a; padding:15px; border-radius:8px; border:1px solid var(--accent-blue); margin-bottom:20px;">
+        <h3>Live Trip Status Report</h3>
+        <div style="max-height: 200px; overflow-y: auto;">
+            <table class="report-table">
+                <thead><tr><th>Customer</th><th>Status</th><th>Date</th><th>Time</th><th>Reason</th><th>Inventory Used</th></tr></thead>
+                <tbody id="liveReportBody"></tbody>
+            </table>
+        </div>
+
+        <!-- PDF link container: MANAGER PANEL -->
+        <div class="pdf-container" id="pdfManagerPanel"></div>
+    </div>
+    <div style="background:#2a2a2a; padding:15px; border-radius:8px; border:1px solid #dc3545; margin-bottom:20px;">
+        <h3 style="color: #dc3545; margin-top:0;">🚨 Rush Dispatch</h3>
+        <input type="text" id="rushCustomer" class="card-input" placeholder="Customer Name">
+        <input type="text" id="rushAddress" class="card-input" placeholder="Address">
+        <input type="text" id="rushNotes" class="card-input" placeholder="Driver Instructions">
+        <button class="btn btn-red" style="width:100%;" onclick="dispatchRush()">Push to Driver</button>
+    </div>
+    <div style="background:#2a2a2a; padding:15px; border-radius:8px; border:1px solid #444;">
+        <h4>Database Search</h4>
+        <div style="display:flex; gap:10px;">
+            <input type="text" id="globalSearchInput" class="card-input" placeholder="Search customer database...">
+            <button class="btn btn-green" onclick="alert('Search feature active')">Search</button>
+        </div>
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px; margin-top:10px;">
+            <button class="btn btn-orange" onclick="generateDailyReport()">Daily Summary</button>
+            <button class="btn btn-green" onclick="finalizeEOD()">Finalize EOD</button>
+        </div>
+    </div>
+  </div>
+</div>
+
+<div id="settingsOverlay">
+    <div class="mgr-content" style="max-width: 450px;">
+        <h2>Settings</h2>
+        <input type="email" id="mgrEmail" class="card-input" placeholder="Manager Email">
+        <button class="btn btn-green" style="width:100%; margin-top:20px;" onclick="toggleSettings()">Save</button>
+    </div>
+</div>
+
+<div id="syncModal">
+    <div class="mgr-content" style="max-width: 350px;">
+        <h3>Open Route</h3>
+        <select id="serverFileSelect" class="card-input"></select>
+        <button class="btn btn-green" style="width:100%;" onclick="confirmSyncUpdate()">Open</button>
+    </div>
+</div>
+
+<script>
+// SECTION 3 (rebuilt JavaScript) will go here.
+</script>
+
+</body>
+</html>
+/* Existing styles (from your file) */
+:root { --culligan-blue: #002b7f; --accent-blue: #0078ff; }
+body { margin: 0; height: 100vh; font-family: 'Segoe UI', Arial, sans-serif; display: flex; flex-direction: column; background: #1a1a1a; color: white; overflow: hidden; }
+#topbar { display: flex; align-items: center; justify-content: space-between; padding: 10px 20px; background: #222; border-bottom: 2px solid var(--accent-blue); z-index: 1001; }
+#activeDeliveryDisplay { flex: 1; text-align: center; margin: 0 20px; color: #fff; font-size: 14px; display: none; }
+#activeDeliveryDisplay b { color: var(--accent-blue); }
+#topPhoneLink { color: #28a745; text-decoration: none; font-weight: bold; }
+#loadingContainer { width: 100%; height: 5px; background: #111; display: none; }
+#loadingBar { width: 0%; height: 100%; background: var(--accent-blue); transition: width 0.3s; }
+#mainContainer { display: flex; flex: 1; overflow: hidden; }
+#sidebar { width: 380px; background: #222; border-right: 1px solid #444; display: flex; flex-direction: column; }
+#sidebarFixed { padding: 15px; border-bottom: 1px solid #444; flex-shrink: 0; }
+#sidebarScroll { flex: 1; overflow-y: auto; padding: 10px 15px; }
+#map { flex: 1; height: 100%; background: #111; z-index: 1; }
+.btn { padding: 10px 15px; background: var(--accent-blue); color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; margin-bottom: 5px; }
+.btn-green { background: #28a745; }
+.btn-red { background: #dc3545; }
+.btn-orange { background: #f39c12; }
+.card-input { width: 100%; padding: 8px; margin: 4px 0; border-radius: 4px; border: 1px solid #555; background: #111; color: white; box-sizing: border-box; font-size: 13px; }
+#activeStopCard { display:none; background:#2a2a2a; padding:12px; border-radius:8px; border-left:5px solid #28a745; display: flex; flex-direction: column; }
+#stopCardInner { overflow-y: auto; margin-top: 8px; border-top: 1px solid #444; padding-top: 8px; }
+#managerOverlay, #syncModal, #settingsOverlay { display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.9); z-index:4000; align-items:center; justify-content:center; }
+.mgr-content { width: 95%; max-width: 850px; background: #222; border-radius: 10px; padding: 20px; border: 1px solid #444; overflow-y: auto; max-height: 90vh; }
+.map-label { background: var(--accent-blue); border: 2px solid white; border-radius: 50%; color: white; font-weight: bold; text-align: center; line-height: 20px; width: 20px; height: 20px; font-size: 12px; }
+.map-label-active { background: #dc3545; border: 2px solid white; border-radius: 50%; color: white; font-weight: bold; text-align: center; line-height: 24px; width: 24px; height: 24px; font-size: 14px; z-index: 1000 !important; }
+.report-table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 13px; }
+.report-table th, .report-table td { border: 1px solid #444; padding: 8px; text-align: left; }
+.report-table th { background: #333; color: var(--accent-blue); }
+
+/* NEW: PDF button + container styles */
+.pdf-btn-small {
+    background: #f39c12;
+    color: white;
+    padding: 3px 6px;
+    font-size: 10px;
+    border-radius: 4px;
+    cursor: pointer;
+    display: inline-block;
+    margin: 2px 0;
+}
+.pdf-container {
+    margin-top: 4px;
+}
+.pdf-btn-small:hover {
+    background: #d9820f;
+}
+// =========================
+// MODULE 1: Core state
+// =========================
+L.Icon.Default.imagePath = 'leaflet/images/';
+
+let map,
+    stops = [],
+    currentStopIndex = 0,
+    allFiles = [],
+    markerLayer,
+    routeLine,
+    stopMarkers = [],
+    signaturePad,
+    liveTripReport = [];
+
+const warehouse = { lat: 55.1707, lng: -118.7947 };
+let slipSequence = 45;
+
+// In-memory PDF store: one latest PDF per stop
+// { [stopIndex]: { url, filename, customer } }
+let pdfStore = {};
+
+// =========================
+// MODULE 2: Initialization
+// =========================
+window.onload = async () => {
+    map = L.map("map").setView([warehouse.lat, warehouse.lng], 11);
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png").addTo(map);
+    markerLayer = L.layerGroup().addTo(map);
+    routeLine = L.polyline([], {color: '#0078ff', weight: 5}).addTo(map);
+
+    try {
+        const res = await fetch('./Routes/list_files.php');
+        allFiles = await res.json();
+        document.getElementById('serverFileSelect').innerHTML =
+            allFiles.map(f => `<option value="${f}">${f}</option>`).join('');
+    } catch(e) {
+        // silent fail is fine here
+    }
+
+    const canvas = document.getElementById('signature-pad');
+    if (canvas) {
+        signaturePad = new SignaturePad(canvas);
+    }
+};
+
+// =========================
+// MODULE 3: Helpers
+// =========================
+function getDist(p1, p2) {
+    return Math.sqrt(Math.pow(p1.lat - p2.lat, 2) + Math.pow(p1.lng - p2.lng, 2));
+}
+
+function optimizeCircular(rawStops) {
+    let unvisited = [...rawStops],
+        optimized = [],
+        currentPos = warehouse;
+    while (unvisited.length > 0) {
+        unvisited.sort((a, b) => getDist(currentPos, a) - getDist(currentPos, b));
+        let closest = unvisited.shift();
+        optimized.push(closest);
+        currentPos = closest;
+    }
+    return optimized;
+}
+
+function openSyncModal() {
+    document.getElementById('syncModal').style.display = 'flex';
+}
+
+function toggleManager() {
+    const el = document.getElementById('managerOverlay');
+    el.style.display = (el.style.display === 'flex') ? 'none' : 'flex';
+}
+
+function toggleSettings() {
+    const el = document.getElementById('settingsOverlay');
+    el.style.display = (el.style.display === 'flex') ? 'none' : 'flex';
+}
+
+function startRoute() {
+    // Just hides setup and shows card if stops already loaded
+    if (!stops || stops.length === 0) {
+        alert("No route loaded yet.");
+        return;
+    }
+    document.getElementById("setupSection").style.display = "none";
+    document.getElementById("activeStopCard").style.display = "flex";
+    document.getElementById("activeDeliveryDisplay").style.display = "block";
+    updateActiveCard();
+}
+
+function imLost() {
+    if (!stops[currentStopIndex]) return;
+    const s = stops[currentStopIndex];
+    map.setView([s.lat, s.lng], 15);
+}
+
+// =========================
+// MODULE 4: Route loading + rendering
+// =========================
+async function confirmSyncUpdate() {
+    const file = document.getElementById('serverFileSelect').value;
+    document.getElementById('syncModal').style.display = 'none';
+    try {
+        const res = await fetch(`./Routes/${file}`);
+        const buffer = await res.arrayBuffer();
+        const workbook = XLSX.read(new Uint8Array(buffer), {type: 'array'});
+        const rows = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]]);
+        let rawStops = rows.map(r => ({
+            company: r.Company || r.Customer || "Unnamed",
+            address: r.Address || "No Address",
+            phone:   r.Phone   || "No Phone",
+            email:   r.Email   || "",
+            lat:     r.Latitude  || warehouse.lat,
+            lng:     r.Longitude || warehouse.lng
+        }));
+        stops = optimizeCircular(rawStops);
+        renderRoute();
+        currentStopIndex = 0;
+        document.getElementById("setupSection").style.display = "none";
+        document.getElementById("activeStopCard").style.display = "flex";
+        document.getElementById("activeDeliveryDisplay").style.display = "block";
+        updateActiveCard();
+    } catch (e) {
+        alert("Load Failed");
+    }
+}
+
+function renderRoute() {
+    markerLayer.clearLayers();
+    stopMarkers = [];
+    const pathCoords = [[warehouse.lat, warehouse.lng]];
+
+    const stopListHtml = stops.map((s, i) => {
+        const marker = L.marker([s.lat, s.lng], {
+            icon: L.divIcon({ className: 'map-label', html: i + 1, iconSize: [20, 20] })
+        }).addTo(markerLayer);
+
+        marker.bindTooltip(`<b>${s.company}</b><br>${s.address}<br>${s.phone}`);
+        stopMarkers.push(marker);
+        pathCoords.push([s.lat, s.lng]);
+
+        // Each stop gets its own sidebar PDF container
+        return `
+            <div style="padding:8px; border-bottom:1px solid #444; background:#2a2a2a; font-size:12px;">
+                ${i + 1}. ${s.company}<br>
+                <span style="color:#888;">${s.address}</span><br>
+                <div class="pdf-container" id="pdfSidebar-${i}"></div>
+            </div>`;
+    }).join('');
+
+    document.getElementById("stopList").innerHTML = stopListHtml;
+
+    pathCoords.push([warehouse.lat, warehouse.lng]);
+    routeLine.setLatLngs(pathCoords);
+
+    if (pathCoords.length > 0) {
+        map.fitBounds(routeLine.getBounds());
+    }
+}
+
+// =========================
+// MODULE 5: Active card + navigation
+// =========================
+function updateActiveCard() {
+    if (!stops || stops.length === 0) return;
+    const s = stops[currentStopIndex];
+    if (!s) return;
+
+    // Update top card
+    document.getElementById('cName').textContent = s.company;
+    document.getElementById('cAddr').textContent = s.address;
+
+    // Update top bar
+    document.getElementById('topName').textContent = s.company;
+    document.getElementById('topAddr').textContent = s.address;
+    const phoneLink = document.getElementById('topPhoneLink');
+    phoneLink.textContent = s.phone;
+    phoneLink.href = s.phone && s.phone !== "No Phone" ? `tel:${s.phone}` : 'tel:';
+
+    // Center map on active stop
+    map.setView([s.lat, s.lng], 13);
+
+    // Update marker styles
+    stopMarkers.forEach((m, idx) => {
+        const el = m._icon;
+        if (!el) return;
+        if (idx === currentStopIndex) {
+            el.classList.remove('map-label');
+            el.classList.add('map-label-active');
+        } else {
+            el.classList.remove('map-label-active');
+            el.classList.add('map-label');
+        }
+    });
+
+    // Clear stop card PDF containers (no persistence on card)
+    clearStopCardPdfContainers();
+}
+
+function moveForward() {
+    if (currentStopIndex >= stops.length - 1) {
+        alert("End of route.");
+        return;
+    }
+    // Clear visual PDFs for the stop we are leaving (card + sidebar)
+    clearVisualPdfForStop(currentStopIndex);
+    currentStopIndex++;
+    updateActiveCard();
+}
+
+function moveBack() {
+    if (currentStopIndex <= 0) {
+        alert("Already at first stop.");
+        return;
+    }
+    // Clear visual PDFs for the stop we are leaving (card + sidebar)
+    clearVisualPdfForStop(currentStopIndex);
+    currentStopIndex--;
+    updateActiveCard();
+}
+
+// =========================
+// MODULE 6: Validation (strict workflow)
+// =========================
+function validateCurrentStop() {
+    const status = document.getElementById('deliveryStatus').value;
+    const failReason = document.getElementById('failReason');
+    const receivedBy = document.getElementById('fieldReceivedBy');
+
+    // Reset visual highlights
+    failReason.style.borderColor = '#555';
+    receivedBy.style.borderColor = '#555';
+    const sigCanvas = document.getElementById('signature-pad');
+    if (sigCanvas) sigCanvas.style.border = 'none';
+
+    // Delivered: require signature + Received By
+    if (status === 'delivered') {
+        let missing = [];
+        if (!receivedBy.value.trim()) {
+            missing.push("Received By");
+            receivedBy.style.borderColor = '#dc3545';
+        }
+        if (!signaturePad || signaturePad.isEmpty()) {
+            missing.push("Signature");
+            if (sigCanvas) sigCanvas.style.border = '2px solid #dc3545';
+        }
+        if (missing.length > 0) {
+            alert("Missing required fields for delivered stop: " + missing.join(", "));
+            return false;
+        }
+    }
+
+    // Skipped: require fail reason
+    if (status === 'not_delivered') {
+        if (!failReason.value.trim()) {
+            failReason.style.borderColor = '#dc3545';
+            alert("Please enter a reason for skipped stop.");
+            return false;
+        }
+    }
+
+    return true;
+}
+
+// =========================
+// MODULE 7: PDF generation
+// =========================
+function generateDeliverySlip(stopIndex, stopData, formData) {
+    // Skipped stops: never generate PDF
+    if (formData.status === 'not_delivered') return;
+
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+
+    const marginLeft = 15;
+    let y = 20;
+
+    // Header bar
+    doc.setFillColor(0, 43, 127); // Culligan blue
+    doc.rect(0, 0, 210, 20, 'F');
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(16);
+    doc.text("Culligan Bottled Water - Grande Prairie", 105, 12, { align: 'center' });
+
+    doc.setTextColor(0, 0, 0);
+    doc.setFontSize(11);
+
+    // Customer section
+    doc.setFont(undefined, 'bold');
+    doc.text("Customer Information", marginLeft, y);
+    doc.setFont(undefined, 'normal');
+    y += 6;
+    doc.text(`Name: ${stopData.company}`, marginLeft, y); y += 5;
+    doc.text(`Address: ${stopData.address}`, marginLeft, y); y += 5;
+    doc.text(`Phone: ${stopData.phone}`, marginLeft, y); y += 8;
+
+    // Delivery details
+    doc.setFont(undefined, 'bold');
+    doc.text("Delivery Details", marginLeft, y);
+    doc.setFont(undefined, 'normal');
+    y += 6;
+    doc.text(`Status: ${formData.status === 'delivered' ? 'Delivered' : 'Skipped'}`, marginLeft, y); y += 5;
+    if (formData.status === 'not_delivered') {
+        doc.text(`Reason: ${formData.failReason || 'N/A'}`, marginLeft, y); y += 8;
+    }
+
+    // Inventory
+    doc.setFont(undefined, 'bold');
+    doc.text("Inventory Used", marginLeft, y);
+    doc.setFont(undefined, 'normal');
+    y += 6;
+    doc.text(`18L: ${formData.qty18L || 0}`, marginLeft, y); y += 5;
+    doc.text(`Small Bottles: ${formData.qtySmall || 0}`, marginLeft, y); y += 5;
+    doc.text(`Cases: ${formData.qtyCases || 0}`, marginLeft, y); y += 5;
+    doc.text(`Salt: ${formData.qtySalt || 0}`, marginLeft, y); y += 5;
+    doc.text(`Notes: ${formData.misc || 'None'}`, marginLeft, y); y += 8;
+
+    // Signature block (delivered only)
+    if (formData.status === 'delivered') {
+        doc.setFont(undefined, 'bold');
+        doc.text("Receipt Confirmation", marginLeft, y);
+        doc.setFont(undefined, 'normal');
+        y += 6;
+        doc.text(`Received By: ${formData.receivedBy}`, marginLeft, y); y += 20;
+
+        // Signature line
+        doc.line(marginLeft, y, marginLeft + 60, y);
+        doc.text("Signature", marginLeft, y + 5);
+        y += 15;
+    }
+
+    // Closing message (centered)
+    doc.setFont(undefined, 'normal');
+    doc.setFontSize(11);
+    doc.text("--------------------------------------------------------------", 105, y, { align: 'center' }); y += 6;
+    doc.text("Thank you for your business.", 105, y, { align: 'center' }); y += 5;
+    doc.text("Invoice to follow.", 105, y, { align: 'center' });
+
+    // Filename
+    slipSequence++;
+    const filename = `DELSLIPS/${stopData.company} - ${String(slipSequence).padStart(4, '0')}.pdf`;
+
+    // Create blob URL for in-session linking
+    const blob = doc.output('blob');
+    const url = URL.createObjectURL(blob);
+
+    pdfStore[stopIndex] = {
+        url,
+        filename,
+        customer: stopData.company
+    };
+
+    updatePdfLinksForStop(stopIndex);
+    updateManagerPdfPanel();
+}
+
+// =========================
+// MODULE 8: PDF link injection
+// =========================
+function clearStopCardPdfContainers() {
+    const top = document.getElementById('pdfStopTop');
+    const bottom = document.getElementById('pdfStopBottom');
+    if (top) top.innerHTML = '';
+    if (bottom) bottom.innerHTML = '';
+}
+
+function clearVisualPdfForStop(stopIndex) {
+    // Clear stop card containers
+    clearStopCardPdfContainers();
+    // Clear sidebar container for that stop
+    const side = document.getElementById(`pdfSidebar-${stopIndex}`);
+    if (side) side.innerHTML = '';
+    // Manager panel persists; do not touch pdfStore here
+}
+
+function updatePdfLinksForStop(stopIndex) {
+    const entry = pdfStore[stopIndex];
+    if (!entry) return;
+
+    // Stop card top + bottom
+    const top = document.getElementById('pdfStopTop');
+    const bottom = document.getElementById('pdfStopBottom');
+    const btnHtml = `<a class="pdf-btn-small" href="${entry.url}" target="_blank">${entry.filename.split('/').pop()}</a>`;
+    if (top) top.innerHTML = btnHtml;
+    if (bottom) bottom.innerHTML = btnHtml;
+
+    // Sidebar
+    const side = document.getElementById(`pdfSidebar-${stopIndex}`);
+    if (side) side.innerHTML = btnHtml;
+}
+
+function updateManagerPdfPanel() {
+    const container = document.getElementById('pdfManagerPanel');
+    if (!container) return;
+
+    const entries = Object.keys(pdfStore)
+        .map(idx => ({ idx: Number(idx), ...pdfStore[idx] }))
+        .sort((a, b) => a.idx - b.idx);
+
+    if (entries.length === 0) {
+        container.innerHTML = '<span style="font-size:11px; color:#888;">No delivery slips generated yet.</span>';
+        return;
+    }
+
+    container.innerHTML = entries.map(e => {
+        const label = `${e.idx + 1}. ${e.customer}`;
+        return `<div><a class="pdf-btn-small" href="${e.url}" target="_blank">${label}</a></div>`;
+    }).join('');
+}
+
+// =========================
+// MODULE 9: Trip report + manager table
+// =========================
+function addTripReportEntry(stopIndex, stopData, formData) {
+    const now = new Date();
+    const dateStr = now.toLocaleDateString();
+    const timeStr = now.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
+
+    const inventorySummary =
+        `18L:${formData.qty18L || 0}, ` +
+        `Small:${formData.qtySmall || 0}, ` +
+        `Cases:${formData.qtyCases || 0}, ` +
+        `Salt:${formData.qtySalt || 0}`;
+
+    const entry = {
+        customer: stopData.company,
+        status: formData.status === 'delivered' ? 'Delivered' : 'Skipped',
+        date: dateStr,
+        time: timeStr,
+        reason: formData.status === 'not_delivered' ? (formData.failReason || '') : '',
+        inventory: inventorySummary
+    };
+
+    liveTripReport.push(entry);
+    renderLiveTripReport();
+}
+
+function renderLiveTripReport() {
+    const tbody = document.getElementById('liveReportBody');
+    if (!tbody) return;
+
+    tbody.innerHTML = liveTripReport.map(e => `
+        <tr>
+            <td>${e.customer}</td>
+            <td>${e.status}</td>
+            <td>${e.date}</td>
+            <td>${e.time}</td>
+            <td>${e.reason || ''}</td>
+            <td>${e.inventory}</td>
+        </tr>
+    `).join('');
+}
+
+// =========================
+// MODULE 10: Process Next (core workflow)
+// =========================
+function processNext() {
+    if (!stops || stops.length === 0) return;
+    const stopData = stops[currentStopIndex];
+
+    // Strict validation
+    if (!validateCurrentStop()) {
+        // Hybrid strict: blocking alert + highlights already handled
+        return;
+    }
+
+    // Gather form data
+    const status = document.getElementById('deliveryStatus').value;
+    const formData = {
+        status,
+        qty18L: Number(document.getElementById('field18L').value || 0),
+        qtySmall: Number(document.getElementById('fieldSmallBottles').value || 0),
+        qtyCases: Number(document.getElementById('fieldCases').value || 0),
+        qtySalt: Number(document.getElementById('fieldSalt').value || 0),
+        misc: document.getElementById('fieldMisc').value || '',
+        failReason: document.getElementById('failReason').value || '',
+        receivedBy: document.getElementById('fieldReceivedBy').value || '',
+        genSlip: document.getElementById('genSlip').checked
+    };
+
+    // Add to trip report
+    addTripReportEntry(currentStopIndex, stopData, formData);
+
+    // Generate PDF only for delivered stops and only if checkbox is checked
+    if (status === 'delivered' && formData.genSlip) {
+        generateDeliverySlip(currentStopIndex, stopData, formData);
+    }
+
+    // Clear form fields
+    document.getElementById('field18L').value = '';
+    document.getElementById('fieldSmallBottles').value = '';
+    document.getElementById('fieldCases').value = '';
+    document.getElementById('fieldSalt').value = '';
+    document.getElementById('fieldMisc').value = '';
+    document.getElementById('failReason').value = '';
+    document.getElementById('fieldReceivedBy').value = '';
+    document.getElementById('genSlip').checked = false;
+    if (signaturePad) signaturePad.clear();
+
+    // Move to next stop
+    if (currentStopIndex >= stops.length - 1) {
+        alert("Route complete.");
+        return;
+    }
+    clearVisualPdfForStop(currentStopIndex);
+    currentStopIndex++;
+    updateActiveCard();
+}
+
+// =========================
+// MODULE 11: Rush dispatch + EOD stubs
+// =========================
+function dispatchRush() {
+    const cust = document.getElementById('rushCustomer').value.trim();
+    const addr = document.getElementById('rushAddress').value.trim();
+    const notes = document.getElementById('rushNotes').value.trim();
+
+    if (!cust || !addr) {
+        alert("Rush dispatch requires at least customer name and address.");
+        return;
+    }
+
+    // For now, just alert + clear; could be extended to inject into route
+    alert(`Rush dispatch created:\n${cust}\n${addr}\nNotes: ${notes || 'None'}`);
+    document.getElementById('rushCustomer').value = '';
+    document.getElementById('rushAddress').value = '';
+    document.getElementById('rushNotes').value = '';
+}
+
+function generateDailyReport() {
+    if (liveTripReport.length === 0) {
+        alert("No trip data to summarize.");
+        return;
+    }
+    alert("Daily summary generated (placeholder).");
+}
+
+function finalizeEOD() {
+    alert("End of day finalized (placeholder).");
+}
+<!-- ========================= -->
+<!-- SECTION 1: HTML + CSS     -->
+<!-- ========================= -->
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Culligan Bottled Water - Grande Prairie</title>
+
+<!-- Leaflet -->
+<link rel="stylesheet" href="leaflet/leaflet.css" />
+<script src="leaflet/leaflet.js"></script>
+
+<!-- jsPDF -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+
+<!-- XLSX -->
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+
+<!-- Signature Pad -->
+<script src="https://cdn.jsdelivr.net/npm/signature_pad@4.0.0/dist/signature_pad.umd.min.js"></script>
+
+<style>
+/* ========================= */
+/* SECTION 2: CSS            */
+/* ========================= */
+
+:root { --culligan-blue: #002b7f; --accent-blue: #0078ff; }
+
+body {
+    margin: 0;
+    height: 100vh;
+    font-family: 'Segoe UI', Arial, sans-serif;
+    display: flex;
+    flex-direction: column;
+    background: #1a1a1a;
+    color: white;
+    overflow: hidden;
+}
+
+#topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 20px;
+    background: #222;
+    border-bottom: 2px solid var(--accent-blue);
+    z-index: 1001;
+}
+
+#activeDeliveryDisplay {
+    flex: 1;
+    text-align: center;
+    margin: 0 20px;
+    color: #fff;
+    font-size: 14px;
+    display: none;
+}
+
+#activeDeliveryDisplay b { color: var(--accent-blue); }
+
+#topPhoneLink {
+    color: #28a745;
+    text-decoration: none;
+    font-weight: bold;
+}
+
+#loadingContainer {
+    width: 100%;
+    height: 5px;
+    background: #111;
+    display: none;
+}
+
+#loadingBar {
+    width: 0%;
+    height: 100%;
+    background: var(--accent-blue);
+    transition: width 0.3s;
+}
+
+#mainContainer {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+}
+
+#sidebar {
+    width: 380px;
+    background: #222;
+    border-right: 1px solid #444;
+    display: flex;
+    flex-direction: column;
+}
+
+#sidebarFixed {
+    padding: 15px;
+    border-bottom: 1px solid #444;
+    flex-shrink: 0;
+}
+
+#sidebarScroll {
+    flex: 1;
+    overflow-y: auto;
+    padding: 10px 15px;
+}
+
+#map {
+    flex: 1;
+    height: 100%;
+    background: #111;
+    z-index: 1;
+}
+
+.btn {
+    padding: 10px 15px;
+    background: var(--accent-blue);
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-weight: bold;
+    margin-bottom: 5px;
+}
+
+.btn-green { background: #28a745; }
+.btn-red { background: #dc3545; }
+.btn-orange { background: #f39c12; }
+
+.card-input {
+    width: 100%;
+    padding: 8px;
+    margin: 4px 0;
+    border-radius: 4px;
+    border: 1px solid #555;
+    background: #111;
+    color: white;
+    box-sizing: border-box;
+    font-size: 13px;
+}
+
+#activeStopCard {
+    display:none;
+    background:#2a2a2a;
+    padding:12px;
+    border-radius:8px;
+    border-left:5px solid #28a745;
+    display: flex;
+    flex-direction: column;
+}
+
+#stopCardInner {
+    overflow-y: auto;
+    margin-top: 8px;
+    border-top: 1px solid #444;
+    padding-top: 8px;
+}
+
+#managerOverlay,
+#syncModal,
+#settingsOverlay {
+    display:none;
+    position:fixed;
+    top:0;
+    left:0;
+    width:100%;
+    height:100%;
+    background:rgba(0,0,0,0.9);
+    z-index:4000;
+    align-items:center;
+    justify-content:center;
+}
+
+.mgr-content {
+    width: 95%;
+    max-width: 850px;
+    background: #222;
+    border-radius: 10px;
+    padding: 20px;
+    border: 1px solid #444;
+    overflow-y: auto;
+    max-height: 90vh;
+}
+
+.map-label {
+    background: var(--accent-blue);
+    border: 2px solid white;
+    border-radius: 50%;
+    color: white;
+    font-weight: bold;
+    text-align: center;
+    line-height: 20px;
+    width: 20px;
+    height: 20px;
+    font-size: 12px;
+}
+
+.map-label-active {
+    background: #dc3545;
+    border: 2px solid white;
+    border-radius: 50%;
+    color: white;
+    font-weight: bold;
+    text-align: center;
+    line-height: 24px;
+    width: 24px;
+    height: 24px;
+    font-size: 14px;
+    z-index: 1000 !important;
+}
+
+.report-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 10px;
+    font-size: 13px;
+}
+
+.report-table th,
+.report-table td {
+    border: 1px solid #444;
+    padding: 8px;
+    text-align: left;
+}
+
+.report-table th {
+    background: #333;
+    color: var(--accent-blue);
+}
+
+/* PDF button + container styles */
+.pdf-btn-small {
+    background: #f39c12;
+    color: white;
+    padding: 3px 6px;
+    font-size: 10px;
+    border-radius: 4px;
+    cursor: pointer;
+    display: inline-block;
+    margin: 2px 0;
+}
+
+.pdf-btn-small:hover {
+    background: #d9820f;
+}
+
+.pdf-container {
+    margin-top: 4px;
+}
+</style>
+</head>
+
+<body>
+<!-- ========================= -->
+<!-- SECTION 4B: BODY CONTENT  -->
+<!-- ========================= -->
+
+<div id="topbar">
+  <div style="display: flex; gap: 12px; align-items: center;">
+    <h2 style="margin:0; font-size: 18px; color: var(--accent-blue);">CULLIGAN</h2>
+    <button class="btn btn-orange" style="padding: 5px 10px; font-size: 12px;" onclick="openSyncModal()">Route</button>
+  </div>
+
+  <div id="activeDeliveryDisplay">
+    <b>Stop:</b> <span id="topName">---</span> |
+    <b>Addr:</b> <span id="topAddr">---</span> |
+    <b>Ph:</b> <a id="topPhoneLink" href="tel:">---</a>
+  </div>
+
+  <div style="display: flex; gap: 8px;">
+    <button class="btn" style="background:#555; padding: 5px 10px; font-size: 12px;" onclick="toggleManager()">Manager</button>
+    <button class="btn" style="background:#444; padding: 5px 10px; font-size: 12px;" onclick="toggleSettings()">⚙️</button>
+  </div>
+</div>
+
+<div id="loadingContainer"><div id="loadingBar"></div></div>
+
+<div id="mainContainer">
+
+  <!-- ========================= -->
+  <!-- SIDEBAR                   -->
+  <!-- ========================= -->
+  <div id="sidebar">
+
+    <div id="sidebarFixed">
+
+      <!-- Setup Section -->
+      <div id="setupSection">
+        <input type="text" id="setupDriver" class="card-input" placeholder="Driver Name">
+        <button class="btn btn-green" style="width:100%;" onclick="startRoute()">Start Route</button>
+      </div>
+
+      <!-- Active Stop Card -->
+      <div id="activeStopCard">
+
+        <div style="display:flex; gap:10px; margin-bottom:8px;">
+          <button class="btn" style="flex:1; background:#444; padding: 5px;" onclick="moveBack()">← Back</button>
+          <button class="btn" style="flex:1; background:#444; padding: 5px;" onclick="moveForward()">Forward →</button>
+        </div>
+
+        <h4 id="cName" style="margin:0; color:#fff; font-size: 16px;"></h4>
+        <p id="cAddr" style="color:var(--accent-blue); margin: 3px 0; font-size: 12px;"></p>
+
+        <!-- PDF link container: TOP of stop card -->
+        <div class="pdf-container" id="pdfStopTop"></div>
+
+        <button class="btn btn-orange" style="width:100%; margin-bottom:5px; padding: 8px;" onclick="imLost()">📍 I'm Lost</button>
+
+        <div id="stopCardInner">
+
+          <div style="display:grid; grid-template-columns: 1fr 1fr; gap:6px;">
+            <div>
+              <label style="font-size:9px; color:#aaa;">18L</label>
+              <input type="number" id="field18L" class="card-input">
+            </div>
+            <div>
+              <label style="font-size:9px; color:#aaa;">Small</label>
+              <input type="number" id="fieldSmallBottles" class="card-input">
+            </div>
+            <div>
+              <label style="font-size:9px; color:#aaa;">Cases</label>
+              <input type="number" id="fieldCases" class="card-input">
+            </div>
+            <div>
+              <label style="font-size:9px; color:#aaa;">Salt</label>
+              <input type="number" id="fieldSalt" class="card-input">
+            </div>
+          </div>
+
+          <input type="text" id="fieldMisc" class="card-input" placeholder="Notes">
+
+          <select id="deliveryStatus" class="card-input">
+            <option value="delivered">Delivered Successfully</option>
+            <option value="not_delivered">Skipped</option>
+          </select>
+
+          <input type="text" id="failReason" class="card-input" placeholder="Reason if skipped">
+          <input type="text" id="fieldReceivedBy" class="card-input" placeholder="Received By">
+
+          <div style="background:white; border-radius:4px; margin-top:5px;">
+            <canvas id="signature-pad" style="width:100%; height:60px; touch-action: none;"></canvas>
+          </div>
+
+          <button class="btn" style="background:#444; width:100%; font-size:9px; padding:2px; margin-top:2px;" onclick="signaturePad.clear()">Clear Signature</button>
+
+          <label style="display:flex; align-items:center; gap:5px; font-size:11px; color:#aaa; margin:10px 0;">
+            <input type="checkbox" id="genSlip"> Generate & Email Delivery Slip
+          </label>
+
+          <!-- PDF link container: BOTTOM of stop card -->
+          <div class="pdf-container" id="pdfStopBottom"></div>
+
+        </div>
+
+        <button class="btn btn-green" id="nextBtn" style="width:100%; margin-top:8px; padding: 12px;" onclick="processNext()">Confirm & Next Stop</button>
+
+      </div>
+    </div>
+
+    <div id="sidebarScroll">
+      <div id="stopList">No route loaded.</div>
+    </div>
+
+  </div>
+
+  <!-- ========================= -->
+  <!-- MAP                       -->
+  <!-- ========================= -->
+  <div id="map"></div>
+
+</div>
+
+<!-- ========================= -->
+<!-- MANAGER OVERLAY           -->
+<!-- ========================= -->
+<div id="managerOverlay">
+  <div class="mgr-content">
+
+    <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #444; margin-bottom:20px;">
+      <h2 style="margin:0; color:var(--accent-blue);">Manager Operations</h2>
+      <button class="btn btn-red" onclick="toggleManager()">Exit</button>
+    </div>
+
+    <div style="background:#2a2a2a; padding:15px; border-radius:8px; border:1px solid var(--accent-blue); margin-bottom:20px;">
+      <h3>Live Trip Status Report</h3>
+
+      <div style="max-height: 200px; overflow-y: auto;">
+        <table class="report-table">
+          <thead>
+            <tr>
+              <th>Customer</th>
+              <th>Status</th>
+              <th>Date</th>
+              <th>Time</th>
+              <th>Reason</th>
+              <th>Inventory Used</th>
+            </tr>
+          </thead>
+          <tbody id="liveReportBody"></tbody>
+        </table>
+      </div>
+
+      <!-- PDF link container: MANAGER PANEL -->
+      <div class="pdf-container" id="pdfManagerPanel"></div>
+    </div>
+
+    <div style="background:#2a2a2a; padding:15px; border-radius:8px; border:1px solid #dc3545; margin-bottom:20px;">
+      <h3 style="color: #dc3545; margin-top:0;">🚨 Rush Dispatch</h3>
+
+      <input type="text" id="rushCustomer" class="card-input" placeholder="Customer Name">
+      <input type="text" id="rushAddress" class="card-input" placeholder="Address">
+      <input type="text" id="rushNotes" class="card-input" placeholder="Driver Instructions">
+
+      <button class="btn btn-red" style="width:100%;" onclick="dispatchRush()">Push to Driver</button>
+    </div>
+
+    <div style="background:#2a2a2a; padding:15px; border-radius:8px; border:1px solid #444;">
+      <h4>Database Search</h4>
+
+      <div style="display:flex; gap:10px;">
+        <input type="text" id="globalSearchInput" class="card-input" placeholder="Search customer database...">
+        <button class="btn btn-green" onclick="alert('Search feature active')">Search</button>
+      </div>
+
+      <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px; margin-top:10px;">
+        <button class="btn btn-orange" onclick="generateDailyReport()">Daily Summary</button>
+        <button class="btn btn-green" onclick="finalizeEOD()">Finalize EOD</button>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ========================= -->
+<!-- SETTINGS OVERLAY          -->
+<!-- ========================= -->
+<div id="settingsOverlay">
+  <div class="mgr-content" style="max-width: 450px;">
+    <h2>Settings</h2>
+    <input type="email" id="mgrEmail" class="card-input" placeholder="Manager Email">
+    <button class="btn btn-green" style="width:100%; margin-top:20px;" onclick="toggleSettings()">Save</button>
+  </div>
+</div>
+
+<!-- ========================= -->
+<!-- SYNC MODAL                -->
+<!-- ========================= -->
+<div id="syncModal">
+  <div class="mgr-content" style="max-width: 350px;">
+    <h3>Open Route</h3>
+    <select id="serverFileSelect" class="card-input"></select>
+    <button class="btn btn-green" style="width:100%;" onclick="confirmSyncUpdate()">Open</button>
+  </div>
+</div>

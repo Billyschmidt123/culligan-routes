@@ -1,0 +1,433 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Culligan Bottled Water- Grande Prairie</title>
+
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/signature_pad@4.0.0/dist/signature_pad.umd.min.js"></script>
+
+<style>
+  :root { --culligan-blue: #002b7f; --accent-blue: #0078ff; }
+  body { margin: 0; height: 100vh; font-family: 'Segoe UI', Arial, sans-serif; display: flex; flex-direction: column; background: #1a1a1a; color: white; overflow: hidden; }
+  #topbar { display: flex; align-items: center; justify-content: space-between; padding: 10px 20px; background: #222; border-bottom: 2px solid var(--accent-blue); z-index: 1001; }
+  #activeDeliveryDisplay { flex: 1; text-align: center; margin: 0 20px; color: #fff; font-size: 14px; display: none; }
+  #activeDeliveryDisplay b { color: var(--accent-blue); }
+  #topPhoneLink { color: #28a745; text-decoration: none; font-weight: bold; }
+  #loadingContainer { width: 100%; height: 5px; background: #111; display: none; }
+  #loadingBar { width: 0%; height: 100%; background: var(--accent-blue); transition: width 0.3s; }
+  #mainContainer { display: flex; flex: 1; overflow: hidden; }
+  #sidebar { width: 380px; background: #222; border-right: 1px solid #444; display: flex; flex-direction: column; }
+  #sidebarFixed { padding: 15px; border-bottom: 1px solid #444; flex-shrink: 0; }
+  #sidebarScroll { flex: 1; overflow-y: auto; padding: 10px 15px; }
+  #map { flex: 1; height: 100%; background: #111; z-index: 1; }
+  .btn { padding: 10px 15px; background: var(--accent-blue); color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; margin-bottom: 5px; }
+  .btn-green { background: #28a745; }
+  .btn-red { background: #dc3545; }
+  .btn-orange { background: #f39c12; }
+  .card-input { width: 100%; padding: 8px; margin: 4px 0; border-radius: 4px; border: 1px solid #555; background: #111; color: white; box-sizing: border-box; font-size: 13px; }
+  #activeStopCard { display:none; background:#2a2a2a; padding:12px; border-radius:8px; border-left:5px solid #28a745; display: flex; flex-direction: column; }
+  #stopCardInner { overflow-y: auto; margin-top: 8px; border-top: 1px solid #444; padding-top: 8px; }
+  #managerOverlay, #syncModal, #settingsOverlay { display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.9); z-index:4000; align-items:center; justify-content:center; }
+  .mgr-content { width: 95%; max-width: 850px; background: #222; border-radius: 10px; padding: 20px; border: 1px solid #444; overflow-y: auto; max-height: 90vh; }
+  .map-label { background: var(--accent-blue); border: 2px solid white; border-radius: 50%; color: white; font-weight: bold; text-align: center; line-height: 20px; width: 20px; height: 20px; font-size: 12px; }
+  .map-label-active { background: #dc3545; border: 2px solid white; border-radius: 50%; color: white; font-weight: bold; text-align: center; line-height: 24px; width: 24px; height: 24px; font-size: 14px; z-index: 1000 !important; }
+  .report-table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 13px; }
+  .report-table th, .report-table td { border: 1px solid #444; padding: 8px; text-align: left; }
+  .report-table th { background: #333; color: var(--accent-blue); }
+</style>
+</head>
+<body>
+
+<div id="topbar">
+  <div style="display: flex; gap: 12px; align-items: center;">
+    <h2 style="margin:0; font-size: 18px; color: var(--accent-blue);">CULLIGAN</h2>
+    <button class="btn btn-orange" style="padding: 5px 10px; font-size: 12px;" onclick="openSyncModal()">Route</button>
+  </div>
+  <div id="activeDeliveryDisplay">
+    <b>Stop:</b> <span id="topName">---</span> | <b>Addr:</b> <span id="topAddr">---</span> | <b>Ph:</b> <a id="topPhoneLink" href="tel:">---</a>
+  </div>
+  <div style="display: flex; gap: 8px;">
+    <button class="btn" style="background:#555; padding: 5px 10px; font-size: 12px;" onclick="toggleManager()">Manager</button>
+    <button class="btn" style="background:#444; padding: 5px 10px; font-size: 12px;" onclick="toggleSettings()">⚙️</button>
+  </div>
+</div>
+
+<div id="loadingContainer"><div id="loadingBar"></div></div>
+
+<div id="mainContainer">
+  <div id="sidebar">
+    <div id="sidebarFixed">
+        <div id="setupSection">
+            <input type="text" id="setupDriver" class="card-input" placeholder="Driver Name">
+            <button class="btn btn-green" style="width:100%;" onclick="startRoute()">Start Route</button>
+        </div>
+        <div id="activeStopCard" style="display:none;">
+            <div style="display:flex; gap:10px; margin-bottom:8px;">
+                <button class="btn" style="flex:1; background:#444; padding: 5px;" onclick="moveBack()">← Back</button>
+                <button class="btn" style="flex:1; background:#444; padding: 5px;" onclick="moveForward()">Forward →</button>
+            </div>
+            <h4 id="cName" style="margin:0; color:#fff; font-size: 16px;"></h4>
+            <p id="cAddr" style="color:var(--accent-blue); margin: 3px 0; font-size: 12px;"></p>
+            <button class="btn btn-orange" style="width:100%; margin-bottom:5px; padding: 8px;" onclick="imLost()">📍 I'm Lost</button>
+            <div id="stopCardInner">
+                <div style="display:grid; grid-template-columns: 1fr 1fr; gap:6px;">
+                    <div><label style="font-size:9px; color:#aaa;">18L</label><input type="number" id="field18L" class="card-input" placeholder="0"></div>
+                    <div><label style="font-size:9px; color:#aaa;">Small</label><input type="number" id="fieldSmallBottles" class="card-input" placeholder="0"></div>
+                    <div><label style="font-size:9px; color:#aaa;">Cases</label><input type="number" id="fieldCases" class="card-input" placeholder="0"></div>
+                    <div><label style="font-size:9px; color:#aaa;">Salt</label><input type="number" id="fieldSalt" class="card-input" placeholder="0"></div>
+                </div>
+                <input type="text" id="fieldMisc" class="card-input" placeholder="Notes">
+                <select id="deliveryStatus" class="card-input">
+                    <option value="delivered">Delivered Successfully</option>
+                    <option value="not_delivered">Skipped</option>
+                </select>
+                <input type="text" id="failReason" class="card-input" placeholder="Reason if skipped">
+                <input type="text" id="fieldReceivedBy" class="card-input" placeholder="Received By">
+                <div style="background:white; border-radius:4px; margin-top:5px;"><canvas id="signature-pad" style="width:100%; height:60px; touch-action: none;"></canvas></div>
+                <button class="btn" style="background:#444; width:100%; font-size:9px; padding:2px; margin-top:2px;" onclick="signaturePad.clear()">Clear Signature</button>
+                <label style="display:flex; align-items:center; gap:5px; font-size:11px; color:#aaa; margin:10px 0;">
+                    <input type="checkbox" id="genSlip"> Generate & Email Delivery Slip
+                </label>
+            </div>
+            <button class="btn btn-green" id="nextBtn" style="width:100%; margin-top:8px; padding: 12px;" onclick="processNext()">Confirm & Next Stop</button>
+        </div>
+    </div>
+    <div id="sidebarScroll"><div id="stopList">No route loaded.</div></div>
+  </div>
+  <div id="map"></div>
+</div>
+
+<div id="managerOverlay">
+  <div class="mgr-content">
+    <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #444; margin-bottom:20px;">
+        <h2 style="margin:0; color:var(--accent-blue);">Manager Operations</h2>
+        <button class="btn btn-red" onclick="toggleManager()">Exit</button>
+    </div>
+    <div style="background:#2a2a2a; padding:15px; border-radius:8px; border:1px solid var(--accent-blue); margin-bottom:20px;">
+        <h3>Live Trip Status Report</h3>
+        <div style="max-height: 200px; overflow-y: auto;">
+            <table class="report-table">
+                <thead><tr><th>Customer</th><th>Status</th><th>Date</th><th>Time</th><th>Reason</th><th>Inventory Used</th></tr></thead>
+                <tbody id="liveReportBody"></tbody>
+            </table>
+        </div>
+    </div>
+    <div style="background:#2a2a2a; padding:15px; border-radius:8px; border:1px solid #dc3545; margin-bottom:20px;">
+        <h3 style="color: #dc3545; margin-top:0;">🚨 Rush Dispatch</h3>
+        <input type="text" id="rushCustomer" class="card-input" placeholder="Customer Name">
+        <input type="text" id="rushAddress" class="card-input" placeholder="Address">
+        <input type="text" id="rushNotes" class="card-input" placeholder="Driver Instructions">
+        <button class="btn btn-red" style="width:100%;" onclick="dispatchRush()">Push to Driver</button>
+    </div>
+    <div style="background:#2a2a2a; padding:15px; border-radius:8px; border:1px solid #444;">
+        <h4>Database Search</h4>
+        <div style="display:flex; gap:10px;">
+            <input type="text" id="globalSearchInput" class="card-input" placeholder="Search customer database...">
+            <button class="btn btn-green" onclick="alert('Search feature active')">Search</button>
+        </div>
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px; margin-top:10px;">
+            <button class="btn btn-orange" onclick="generateDailyReport()">Daily Summary</button>
+            <button class="btn btn-green" onclick="finalizeEOD()">Finalize EOD</button>
+        </div>
+    </div>
+  </div>
+</div>
+
+<div id="settingsOverlay">
+    <div class="mgr-content" style="max-width: 450px;">
+        <h2>Settings</h2>
+        <input type="email" id="mgrEmail" class="card-input" placeholder="Manager Email">
+        <button class="btn btn-green" style="width:100%; margin-top:20px;" onclick="toggleSettings()">Save</button>
+    </div>
+</div>
+
+<div id="syncModal">
+    <div class="mgr-content" style="max-width: 350px;">
+        <h3>Open Route</h3>
+        <select id="serverFileSelect" class="card-input"></select>
+        <button class="btn btn-green" style="width:100%;" onclick="confirmSyncUpdate()">Open</button>
+    </div>
+</div>
+
+<script>
+let map, stops = [], currentStopIndex = 0, allFiles = [], markerLayer, routeLine, stopMarkers = [], signaturePad, liveTripReport = [];
+const warehouse = { lat: 55.1707, lng: -118.7947 };
+let slipSequence = 45;
+
+window.onload = async () => {
+    map = L.map("map").setView([warehouse.lat, warehouse.lng], 11);
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png").addTo(map);
+    markerLayer = L.layerGroup().addTo(map);
+    routeLine = L.polyline([], {color: '#0078ff', weight: 5}).addTo(map);
+    try {
+        const res = await fetch('./Routes/list_files.php');
+        allFiles = await res.json();
+        document.getElementById('serverFileSelect').innerHTML = allFiles.map(f => `<option value="${f}">${f}</option>`).join('');
+    } catch(e) {}
+    const canvas = document.getElementById('signature-pad');
+    if(canvas) signaturePad = new SignaturePad(canvas);
+};
+
+function getDist(p1, p2) {
+    return Math.sqrt(Math.pow(p1.lat - p2.lat, 2) + Math.pow(p1.lng - p2.lng, 2));
+}
+
+function optimizeCircular(rawStops) {
+    let unvisited = [...rawStops], optimized = [], currentPos = warehouse;
+    while(unvisited.length > 0) {
+        unvisited.sort((a, b) => getDist(currentPos, a) - getDist(currentPos, b));
+        let closest = unvisited.shift();
+        optimized.push(closest);
+        currentPos = closest;
+    }
+    return optimized;
+}
+
+async function confirmSyncUpdate() {
+    const file = document.getElementById('serverFileSelect').value;
+    document.getElementById('syncModal').style.display = 'none';
+
+    const loadingContainer = document.getElementById('loadingContainer');
+    const loadingBar = document.getElementById('loadingBar');
+    if (loadingContainer && loadingBar) {
+        loadingContainer.style.display = 'block';
+        loadingBar.style.width = '20%';
+    }
+
+    try {
+        const res = await fetch(`./Routes/${file}`);
+        const buffer = await res.arrayBuffer();
+        const workbook = XLSX.read(new Uint8Array(buffer), {type: 'array'});
+        const rows = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]]);
+        let rawStops = rows.map(r => ({
+            company: r.Company || r.Customer || "Unnamed",
+            address: r.Address || "No Address",
+            phone: r.Phone || "No Phone",
+            email: r.Email || "",
+            lat: r.Latitude || (warehouse.lat + (Math.random() * 0.04 - 0.02)),
+            lng: r.Longitude || (warehouse.lng + (Math.random() * 0.04 - 0.02))
+        }));
+        stops = optimizeCircular(rawStops);
+        renderRoute();
+    } catch (e) {
+        alert("Load Failed");
+    } finally {
+        if (loadingContainer && loadingBar) {
+            loadingBar.style.width = '100%';
+            setTimeout(() => {
+                loadingContainer.style.display = 'none';
+                loadingBar.style.width = '0%';
+            }, 400);
+        }
+    }
+}
+
+function renderRoute() {
+    markerLayer.clearLayers();
+    stopMarkers = [];
+    const pathCoords = [[warehouse.lat, warehouse.lng]];
+    document.getElementById("stopList").innerHTML = stops.map((s, i) => {
+        const marker = L.marker([s.lat, s.lng], {
+            icon: L.divIcon({ className: 'map-label', html: i + 1, iconSize: [20, 20] })
+        }).addTo(markerLayer);
+        marker.bindTooltip(`<b>${s.company}</b><br>${s.address}<br>${s.phone}`);
+        stopMarkers.push(marker);
+        pathCoords.push([s.lat, s.lng]);
+        return `<div style="padding:8px; border-bottom:1px solid #444; background:#2a2a2a; font-size:12px;">${i+1}. ${s.company}</div>`;
+    }).join('');
+    pathCoords.push([warehouse.lat, warehouse.lng]);
+    routeLine.setLatLngs(pathCoords);
+    if(pathCoords.length > 0) map.fitBounds(routeLine.getBounds());
+}
+
+async function generatePDF(stop, data) {
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF();
+    const now = new Date();
+
+    const longDate = now.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+    const slipID = String(slipSequence).padStart(4, '0');
+
+    const fileName = `${stop.company} - ${slipID} - ${longDate}.pdf`;
+
+    doc.text("CULLIGAN DELIVERY SLIP", 10, 10);
+    doc.text(`Customer: ${stop.company}`, 10, 20);
+    doc.text(`Address: ${stop.address}`, 10, 30);
+    doc.text(`Status: ${data.status}`, 10, 40);
+    doc.text(`18L: ${data.bottles18}`, 10, 50);
+    doc.text(`Small: ${data.small}`, 10, 60);
+    doc.text(`Cases: ${data.cases}`, 10, 70);
+    doc.text(`Salt: ${data.salt}`, 10, 80);
+    doc.text(`Notes: ${data.misc}`, 10, 90);
+    doc.text(`Received By: ${data.signee}`, 10, 100);
+    doc.text(`Timestamp: ${now.toLocaleString()}`, 10, 110);
+    if (!signaturePad.isEmpty()) doc.addImage(signaturePad.toDataURL(), 'PNG', 10, 120, 50, 25);
+
+    // Download
+    doc.save(fileName);
+
+    // Automatic save to /DELSLIPS
+    const pdfBlob = doc.output('blob');
+    const formData = new FormData();
+    formData.append('pdf', pdfBlob, fileName);
+    formData.append('directory', 'DELSLIPS');
+
+    fetch('upload_slip.php', {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => response.json())
+    .catch(error => console.error('Auto-save failed:', error));
+
+    slipSequence++;
+
+    const subject = `Delivery Slip – ${stop.company}`;
+    const body = `Hello ${stop.company},%0D%0A%0D%0AHere is your delivery slip for your delivery today for your records.%0D%0APlease note this is not a invoice that will be sent shortly.%0D%0A%0D%0AThanks for your business.%0D%0A%0D%0A<<<< THIS EMAIL IS NOT MONITORED PLEASE CALL 780 532 8584 IF YOU HAVE QUESTIONS.`;
+    window.location.href = `mailto:${stop.email || ''}?subject=${encodeURIComponent(subject)}&body=${body}`;
+}
+
+function processNext() {
+    const now = new Date();
+    const stop = stops[currentStopIndex];
+    const data = {
+        bottles18: document.getElementById("field18L").value || 0,
+        small: document.getElementById("fieldSmallBottles").value || 0,
+        cases: document.getElementById("fieldCases").value || 0,
+        salt: document.getElementById("fieldSalt").value || 0,
+        misc: document.getElementById("fieldMisc").value,
+        status: document.getElementById('deliveryStatus').value,
+        reason: document.getElementById('failReason').value || 'N/A',
+        signee: document.getElementById("fieldReceivedBy").value
+    };
+    if(document.getElementById('genSlip').checked) generatePDF(stop, data);
+
+    const longDate = now.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+    liveTripReport.push({ ...data, customer: stop.company, time: now.toLocaleTimeString(), date: longDate });
+
+    let t18=0, tSm=0, tCs=0, tSa=0;
+    liveTripReport.forEach(r => {
+        if(r.status === 'delivered') {
+            t18 += parseInt(r.bottles18);
+            tSm += parseInt(r.small);
+            tCs += parseInt(r.cases);
+            tSa += parseInt(r.salt);
+        }
+    });
+
+    document.getElementById('liveReportBody').innerHTML = liveTripReport.map(r =>
+        `<tr><td>${r.customer}</td><td>${r.status}</td><td>${r.date}</td><td>${r.time}</td><td>${r.reason}</td><td>18L:${t18}, Sm:${tSm}, Cs:${tCs}, Salt:${tSa}</td></tr>`
+    ).join('');
+
+    currentStopIndex++;
+    updateActiveCard();
+}
+
+function dispatchRush() {
+    const name = document.getElementById('rushCustomer').value;
+    const addr = document.getElementById('rushAddress').value;
+    const inst = document.getElementById('rushNotes').value;
+    let existing = stops.find(s => s.company.toLowerCase() === name.toLowerCase());
+    let rushStop = existing ? {...existing} : {
+        company: name,
+        address: addr,
+        lat: warehouse.lat,
+        lng: warehouse.lng,
+        phone: "N/A",
+        email: ""
+    };
+    alert(`🚨 EMERGENCY ORDER\n\nCustomer: ${rushStop.company}\nAddress: ${rushStop.address}\nPhone: ${rushStop.phone}\nInstructions: ${inst}`);
+    stops.push(rushStop);
+    renderRoute();
+    toggleManager();
+}
+
+function updateActiveCard() {
+    if(currentStopIndex < stops.length) {
+        const stop = stops[currentStopIndex];
+        document.getElementById("cName").textContent = stop.company;
+        document.getElementById("cAddr").textContent = stop.address;
+        document.getElementById("activeDeliveryDisplay").style.display = "block";
+        document.getElementById("topName").textContent = stop.company;
+        document.getElementById("topAddr").textContent = stop.address;
+        document.getElementById("topPhoneLink").href = `tel:${stop.phone.toString().replace(/\D/g, '')}`;
+        document.getElementById("topPhoneLink").textContent = stop.phone;
+
+        document.getElementById("field18L").value = "";
+        document.getElementById("fieldSmallBottles").value = "";
+        document.getElementById("fieldCases").value = "";
+        document.getElementById("fieldSalt").value = "";
+        document.getElementById("fieldMisc").value = "";
+        document.getElementById("fieldReceivedBy").value = "";
+        document.getElementById("failReason").value = "";
+        document.getElementById("deliveryStatus").value = "delivered";
+        document.getElementById("genSlip").checked = false;
+        if(signaturePad) signaturePad.clear();
+
+        stopMarkers.forEach((m, i) => m.setIcon(L.divIcon({
+            className: (i === currentStopIndex) ? 'map-label-active' : 'map-label',
+            html: i + 1,
+            iconSize: (i === currentStopIndex) ? [24, 24] : [20, 20]
+        })));
+        map.setView([stop.lat, stop.lng], 15);
+    } else {
+        document.getElementById("activeStopCard").style.display = "none";
+        document.getElementById("activeDeliveryDisplay").style.display = "none";
+    }
+}
+
+function startRoute() {
+    currentStopIndex = 0;
+    updateActiveCard();
+    document.getElementById("setupSection").style.display = "none";
+    document.getElementById("activeStopCard").style.display = "flex";
+}
+
+function moveBack() {
+    if(currentStopIndex > 0) {
+        currentStopIndex--;
+        updateActiveCard();
+    }
+}
+
+function moveForward() {
+    if(currentStopIndex < stops.length - 1) {
+        currentStopIndex++;
+        updateActiveCard();
+    }
+}
+
+function toggleManager() {
+    const m = document.getElementById('managerOverlay');
+    m.style.display = (m.style.display === 'flex') ? 'none' : 'flex';
+}
+
+function toggleSettings() {
+    const s = document.getElementById('settingsOverlay');
+    s.style.display = (s.style.display === 'flex') ? 'none' : 'flex';
+}
+
+function openSyncModal() {
+    document.getElementById('syncModal').style.display = 'flex';
+}
+
+function imLost() {
+    if (stops[currentStopIndex]) {
+        window.open(`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(stops[currentStopIndex].address)}`, '_blank');
+    }
+}
+
+function generateDailyReport() {
+    alert("Summary Ready");
+}
+
+function finalizeEOD() {
+    alert("Logs sent");
+}
+</script>
+</body>
+</html>
